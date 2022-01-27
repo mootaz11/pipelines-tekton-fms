@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: reporting-pvc
+spec:
+  storageClassName: nasoft-nfs-storage
+  resources:
+    requests:
+      storage: 20Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
