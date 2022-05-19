@@ -1,0 +1,75 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline-fms-frontend-dev
+  namespace: maxula-fms-dev
+spec:
+  params:
+  - name: GIT_REPO
+    type: string
+    description: the clonable repo source e.g.  https://github.com/tektoncd/pipeline.git
+  - name: GIT_REF
+    type: string
+    description: git revision to checkout (branch, tag, sha, ref…)
+  - name: IMAGE_DEST
+    type: string
+    description: Base image repo url
+  workspaces:
+    - name: shared-workspace
+    - name: ssh-workspace
+  tasks:
+    - name: clone-repo
+      workspaces:
+      - name: output
+        workspace: shared-workspace
+      - name: ssh-directory
+        workspace: ssh-workspace
+      params:
+        - name: url
+          value: $(params.GIT_REPO)
+        - name: revision
+          value: $(params.GIT_REF)
+        - name: submodules
+          value: 'true'
+        - name: depth
+          value: '1'
+        - name: sslVerify
+          value: 'true'
+        - name: deleteExisting
+          value: 'true'
+        - name: verbose
+          value: 'true'
+        - name: gitInitImage
+          value: >-
+            gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:v0.21.0
+        - name: userHome
+          value: /tekton/home
+      taskRef:
+        kind: Task
+        name: git-clone
+    - name: tag-image-commit
+      params:
+        - name: commit
+          value: $(tasks.clone-repo.results.commit)
+        - name: url
+          value: $(tasks.clone-repo.results.url)
+        - name: imagestream
+          value: $(params.IMAGE_DEST)
+      taskRef:
+        name: tag-image 
+      runAfter:
+        - "clone-repo"
+      workspaces:
+        - name: tagput
+          workspace: shared-workspace
+    - name: build-and-push
+      params:
+        - name: IMAGE
+          value: $(tasks.tag-image-commit.results.tag)
+      taskRef:
+        name: build-and-push
+      runAfter:
+        - "tag-image-commit"
+      workspaces:
+        - name: source
+          workspace:  shared-workspace

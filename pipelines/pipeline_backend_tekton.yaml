@@ -1,0 +1,121 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline-fms-reporting-dev
+  namespace: maxula-fms-dev
+spec:
+  params:
+  - name: GIT_REPO
+    type: string
+    description: the clonable repo source 
+    default: "git@gitlab.com:azizjouini68/fms_reporting.git"
+  - name: MANIFESTS_WORKDIR
+    description: directory contains the project manifests
+    default: "k8s"
+  - name: GIT_REF
+    type: string
+    description: git revision to checkout (branch, tag, sha, ref…)
+    default: stage
+  - name: IMAGE_DEST
+    type: string
+    default: amara11/maxulareporting
+    description: Base image repo url
+  - name: deployment
+    description: The name of the deployment patch the image
+    type: string
+    default: reporting
+  workspaces:
+    - name: shared-workspace
+    - name: ssh-workspace
+  tasks:
+    - name: clone-repo
+      workspaces:
+      - name: output
+        workspace: shared-workspace
+      - name: ssh-directory
+        workspace: ssh-workspace
+      params:
+        - name: url
+          value: $(params.GIT_REPO)
+        - name: revision
+          value: $(params.GIT_REF)
+        - name: submodules
+          value: 'true'
+        - name: depth
+          value: '1'
+        - name: sslVerify
+          value: 'true'
+        - name: deleteExisting
+          value: 'true'
+        - name: verbose
+          value: 'true'
+        - name: gitInitImage
+          value: >-
+            gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:v0.21.0
+        - name: userHome
+          value: /tekton/home
+      taskRef:
+        kind: Task
+        name: git-clone
+    - name: tag-image-commit
+      params:
+        - name: commit
+          value: $(tasks.clone-repo.results.commit)
+        - name: url
+          value: $(tasks.clone-repo.results.url)
+        - name: imagestream
+          value: $(params.IMAGE_DEST)
+      taskRef:
+        name: tag-image 
+      runAfter:
+        - "clone-repo"
+      workspaces:
+        - name: tagput
+          workspace: shared-workspace
+    - name: maven-packaging
+      workspaces:
+        - name: source
+          workspace:  shared-workspace
+        - name: maven-settings
+          workspace: shared-workspace
+      taskRef:
+        name: maven-packaging
+      runAfter:
+        - "clone-repo"
+    - name: build-and-push
+      params:
+        - name: IMAGE
+          value: $(tasks.tag-image-commit.results.tag)
+      taskRef:
+        name: build-and-push
+      runAfter:
+        - "maven-packaging"
+        - "tag-image-commit"
+      workspaces:
+        - name: source
+          workspace:  shared-workspace
+    - name: apply-manifests
+      workspaces:
+        - name: source
+          workspace: shared-workspace 
+      params:
+        - name: workdir
+          value: $(params.MANIFESTS_WORKDIR)
+      taskRef:
+        name: "apply-manifests"
+      runAfter:
+        - "build-and-push"
+    - name: patch-deployment
+      params:
+        - name: IMAGE
+          value: $(tasks.tag-image-commit.results.tag)
+        - name: deployment
+          value: $(params.deployment)
+      taskRef:
+        name: "update-deployment"
+      runAfter:
+        - "apply-manifests"
+
+      
+          
+

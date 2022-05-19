@@ -1,0 +1,132 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline-fms-ws-dev
+  namespace: maxula-fms-dev
+spec:
+  params:
+  - name: GIT_REPO
+    type: string
+    description: the clonable repo source e.g.  https://github.com/tektoncd/pipeline.git
+    default: "git@gitlab.com:azizjouini68/fms_reporting.git"
+  - name: GIT_REF
+    type: string
+    description: git revision to checkout (branch, tag, sha, ref…)
+    default: stage
+  - name: IMAGE_DEST
+    type: string
+    default: amara11/maxulareporting
+    description: Base image repo url
+  - name: DEPLOY_REF
+    type: string
+    default: main
+  - name: DEPLOY_REPO
+    type: string
+    default: git@gitlab.com:mootez11/deploy-fms-ws.git
+  - name: DEV_OVERLAY_DIR
+    type: string
+    description: the directory where the dev overlay is
+    default: "dev"
+  - name: PROD_OVERLAY_DIR
+    type: string
+    description: the directory where the prod overlay is
+    default: "prod"
+  workspaces:
+    - name: shared-workspace
+    - name: ssh-workspace
+  tasks:
+    - name: clone-repo
+      workspaces:
+      - name: output
+        workspace: shared-workspace
+      - name: ssh-directory
+        workspace: ssh-workspace
+      params:
+        - name: url
+          value: $(params.GIT_REPO)
+        - name: revision
+          value: $(params.GIT_REF)
+        - name: submodules
+          value: 'true'
+        - name: depth
+          value: '1'
+        - name: sslVerify
+          value: 'true'
+        - name: deleteExisting
+          value: 'true'
+        - name: verbose
+          value: 'true'
+        - name: gitInitImage
+          value: >-
+            gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:v0.21.0
+        - name: userHome
+          value: /tekton/home
+      taskRef:
+        kind: Task
+        name: git-clone
+    - name: tag-image-commit
+      params:
+        - name: commit
+          value: $(tasks.clone-repo.results.commit)
+        - name: url
+          value: $(tasks.clone-repo.results.url)
+        - name: imagestream
+          value: $(params.IMAGE_DEST)
+      taskRef:
+        name: tag-image 
+      runAfter:
+        - "clone-repo"
+      workspaces:
+        - name: tagput
+          workspace: shared-workspace
+    - name: maven-packaging
+      workspaces:
+        - name: source
+          workspace:  shared-workspace
+        - name: maven-settings
+          workspace: shared-workspace
+      taskRef:
+        name: maven-packaging
+      runAfter:
+        - "clone-repo"
+    - name: build-and-push
+      params:
+        - name: IMAGE
+          value: $(tasks.tag-image-commit.results.tag)
+      taskRef:
+        name: build-and-push
+      runAfter:
+        - "maven-packaging"
+        - "tag-image-commit"
+      workspaces:
+        - name: source
+          workspace:  shared-workspace
+    - name: clone-deploy-repo
+      params:
+        - name: url
+          value: $(params.DEPLOY_REPO)
+        - name: revision
+          value: $(params.DEPLOY_REF)
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+        - name: ssh-directory
+          workspace: ssh-workspace
+
+      taskRef:
+        name: "git-clone"
+      runAfter:
+        - "build-and-push"
+    - name: patch-dev-image
+      params:
+      - name: imagestream
+        value: $(tasks.tag-image-commit.results.tag)
+      - name: overlaypath
+        value: overlays/$(params.DEV_OVERLAY_DIR)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      taskRef:
+        name: "kustomize"
+      runAfter:
+        - "clone-deploy-repo"
