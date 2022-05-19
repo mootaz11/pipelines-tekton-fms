@@ -12,5 +12,5 @@ patchesJson6902:
       version: v1
       kind: Deployment
 images:
-  - name: amara11/maxulareportings
+  - name: amara11/maxulareporting
     newTag: gitops-dev
